@@ -17,42 +17,61 @@ const {
 const fs = require('fs');
 require('dotenv').config();
 
-// --- Configurações ---
+/* ================= CONFIG ================= */
+
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-const ranking = {};
-const fsRanking = './rankingMessage.json';
+const RANKING_FILE = './ranking.json';
+const MESSAGE_FILE = './message.json';
+const RANKING_MESSAGE_FILE = './rankingMessage.json';
+
+let ranking = {};
 let chequeResetDoDia = false;
 
-// --- Registrar slash command /resetar-ranking ---
+/* ================= UTIL ================= */
+
+function salvarRanking() {
+  fs.writeFileSync(RANKING_FILE, JSON.stringify(ranking, null, 2));
+}
+
+function carregarRanking() {
+  if (fs.existsSync(RANKING_FILE)) {
+    ranking = JSON.parse(fs.readFileSync(RANKING_FILE));
+  }
+}
+
+/* ================= SLASH COMMAND ================= */
+
 const commands = [
   new SlashCommandBuilder()
     .setName('resetar-ranking')
-    .setDescription('Reseta o ranking manualmente (somente para o ADMIN)')
+    .setDescription('Reseta o ranking manualmente (ADMIN)')
 ].map(cmd => cmd.toJSON());
 
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
-(async () => {
-  try {
-    await rest.put(
-      Routes.applicationGuildCommands(process.env.BOT_ID, process.env.GUILD_ID),
-      { body: commands }
-    );
-    console.log('✅ Comando /resetar-ranking registrado!');
-  } catch (err) {
-    console.error('❌ Erro ao registrar comando:', err);
-  }
-})();
+async function registrarComandos() {
+  await rest.put(
+    Routes.applicationGuildCommands(
+      process.env.BOT_ID,
+      process.env.GUILD_ID
+    ),
+    { body: commands }
+  );
+  console.log('✅ Slash commands registrados');
+}
 
-// --- Inicialização do bot ---
+/* ================= BOT READY ================= */
+
 client.once('ready', async () => {
-  console.log(`🤖 Bot online como ${client.user.tag}`);
+  console.log(`🤖 Online como ${client.user.tag}`);
 
-  const canalRegistroId = '1450237461824536670'; // Canal de registro
-  const canal = await client.channels.fetch(canalRegistroId);
+  carregarRanking();
+  await registrarComandos();
+
+  const canal = await client.channels.fetch('1450237461824536670');
 
   const botao = new ButtonBuilder()
     .setCustomId('abrir_registro')
@@ -62,282 +81,162 @@ client.once('ready', async () => {
   const row = new ActionRowBuilder().addComponents(botao);
 
   let data = { registroMessageId: '' };
-  if (fs.existsSync('./message.json')) data = JSON.parse(fs.readFileSync('./message.json'));
+  if (fs.existsSync(MESSAGE_FILE)) {
+    data = JSON.parse(fs.readFileSync(MESSAGE_FILE));
+  }
 
-  if (data.registroMessageId) {
-    try {
+  try {
+    if (data.registroMessageId) {
       const msg = await canal.messages.fetch(data.registroMessageId);
       await msg.edit({
-        content: '🏍️ **GTM — REGISTRO DE ACOMPANHAMENTO**\nClique no botão abaixo para registrar sua ocorrência:',
+        content: '🏍️ **GTM — REGISTRO DE ACOMPANHAMENTO**',
         components: [row]
       });
-    } catch {
-      const msg = await canal.send({
-        content: '🏍️ **GTM — REGISTRO DE ACOMPANHAMENTO**\nClique no botão abaixo para registrar sua ocorrência:',
-        components: [row]
-      });
-      data.registroMessageId = msg.id;
-      fs.writeFileSync('./message.json', JSON.stringify(data, null, 2));
+    } else {
+      throw new Error();
     }
-  } else {
+  } catch {
     const msg = await canal.send({
-      content: '🏍️ **GTM — REGISTRO DE ACOMPANHAMENTO**\nClique no botão abaixo para registrar sua ocorrência:',
+      content: '🏍️ **GTM — REGISTRO DE ACOMPANHAMENTO**',
       components: [row]
     });
     data.registroMessageId = msg.id;
-    fs.writeFileSync('./message.json', JSON.stringify(data, null, 2));
+    fs.writeFileSync(MESSAGE_FILE, JSON.stringify(data, null, 2));
   }
 
-  // Checagem de reset mensal a cada hora
   setInterval(() => checarResetMensal(client), 1000 * 60 * 60);
 });
 
-// --- Interações ---
+/* ================= INTERAÇÕES ================= */
+
 client.on('interactionCreate', async interaction => {
   try {
-    // --- Slash command /resetar-ranking ---
-    if (interaction.isChatInputCommand() && interaction.commandName === 'resetar-ranking') {
+    /* ---- SLASH ---- */
+    if (interaction.isChatInputCommand()) {
       if (interaction.user.id !== process.env.ADMIN_ID) {
-        await interaction.reply({ content: '❌ Você não tem permissão para usar este comando.', ephemeral: true });
-        return;
+        return interaction.reply({ content: '❌ Sem permissão', ephemeral: true });
       }
-      for (const passaporte in ranking) ranking[passaporte].pontos = 0;
+      for (const p in ranking) ranking[p].pontos = 0;
+      salvarRanking();
       await atualizarRanking(client);
-      await interaction.reply({ content: '🔔 Ranking manualmente zerado com sucesso!', ephemeral: true });
-      return;
+      return interaction.reply({ content: '🔄 Ranking resetado', ephemeral: true });
     }
 
-    // --- Botão de registro ---
+    /* ---- BOTÃO ---- */
     if (interaction.isButton() && interaction.customId === 'abrir_registro') {
       const modal = new ModalBuilder()
         .setCustomId('registro_modal')
-        .setTitle('Registro de Ocorrência GTM');
-
-      const nome = new TextInputBuilder()
-        .setCustomId('nome')
-        .setLabel('Nome do GTM')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      const passaporte = new TextInputBuilder()
-        .setCustomId('passaporte')
-        .setLabel('Passaporte')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
+        .setTitle('Registro GTM');
 
       modal.addComponents(
-        new ActionRowBuilder().addComponents(nome),
-        new ActionRowBuilder().addComponents(passaporte)
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('nome')
+            .setLabel('Nome')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('passaporte')
+            .setLabel('Passaporte')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+        )
       );
 
-      await interaction.showModal(modal);
-      return;
+      return interaction.showModal(modal);
     }
 
-    // --- Modal de registro ---
+    /* ---- MODAL REGISTRO ---- */
     if (interaction.type === InteractionType.ModalSubmit && interaction.customId === 'registro_modal') {
       const nome = interaction.fields.getTextInputValue('nome');
       const passaporte = interaction.fields.getTextInputValue('passaporte');
 
-      if (!ranking[passaporte]) {
-        ranking[passaporte] = { nome, pontos: 0, finalizado: false };
-      } else {
-        ranking[passaporte].nome = nome;
-        ranking[passaporte].finalizado = false;
-      }
+      ranking[passaporte] ??= { nome, pontos: 0 };
+      ranking[passaporte].nome = nome;
 
-      const qruMenu = new StringSelectMenuBuilder()
-        .setCustomId(`qru_${passaporte}`)
-        .setPlaceholder('Tipo de QRU / Ocorrência')
+      salvarRanking();
+
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId(`resultado_${passaporte}`)
+        .setPlaceholder('Resultado')
         .addOptions(
-          { label: 'Tráfico de drogas', value: 'trafico' },
-          { label: 'Roubo a registradora', value: 'registradora' },
-          { label: 'Roubo de veículo', value: 'veiculo' },
-          { label: 'Roubo porta-malas', value: 'portamalas' },
-          { label: 'Roubo a ATM', value: 'atm' },
-          { label: 'Acompanhamento', value: 'acompanhamento' }
+          { label: 'Concluído', value: 'ok' },
+          { label: 'QTA', value: 'qta' }
         );
 
-      await interaction.reply({
-        content: `👤 **${nome}**\nSelecione o tipo de ocorrência:`,
-        components: [new ActionRowBuilder().addComponents(qruMenu)],
+      return interaction.reply({
+        content: '🏍️ Resultado do acompanhamento:',
+        components: [new ActionRowBuilder().addComponents(menu)],
         ephemeral: true
       });
-      return;
     }
 
-    // --- Seleção de ocorrência ---
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('qru_')) {
-      const passaporte = interaction.customId.split('_')[1];
-
-      const resultadoMenu = new StringSelectMenuBuilder()
-        .setCustomId(`resultado_${passaporte}`)
-        .setPlaceholder('Resultado do acompanhamento')
-        .addOptions(
-          { label: '✅ Concluído', value: 'concluido' },
-          { label: '❌ QTA (queda / fuga)', value: 'qta' }
-        );
-
-      await interaction.update({
-        content: '🏍️ Resultado do acompanhamento:',
-        components: [new ActionRowBuilder().addComponents(resultadoMenu)]
-      });
-      return;
-    }
-
-    // --- Resultado ---
+    /* ---- RESULTADO ---- */
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('resultado_')) {
       const passaporte = interaction.customId.split('_')[1];
-      ranking[passaporte].resultado = interaction.values[0];
+      ranking[passaporte].pontos += interaction.values[0] === 'ok' ? 3 : 1;
+      salvarRanking();
 
-      const prisaoMenu = new StringSelectMenuBuilder()
-        .setCustomId(`prisao_${passaporte}`)
-        .setPlaceholder('Houve prisão?')
-        .addOptions(
-          { label: '🚔 Sim', value: 'sim' },
-          { label: '❌ Não', value: 'nao' }
-        );
-
-      await interaction.update({
-        content: '🚔 Houve prisão na ocorrência?',
-        components: [new ActionRowBuilder().addComponents(prisaoMenu)]
-      });
-      return;
-    }
-
-    // --- Prisão ---
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('prisao_')) {
-      const passaporte = interaction.customId.split('_')[1];
-      if (ranking[passaporte].finalizado) return;
-
-      ranking[passaporte].houvePrisao = interaction.values[0];
-
-      if (interaction.values[0] === 'nao') {
-        ranking[passaporte].finalizado = true;
-        await finalizarRegistro(interaction, passaporte, 0);
-        return;
-      }
-
-      const modal = new ModalBuilder()
-        .setCustomId(`presos_${passaporte}`)
-        .setTitle('Quantidade de presos');
-
-      const qtd = new TextInputBuilder()
-        .setCustomId('qtd_presos')
-        .setLabel('Quantos presos?')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-      modal.addComponents(new ActionRowBuilder().addComponents(qtd));
-      await interaction.showModal(modal);
-      return;
-    }
-
-    // --- Modal de presos ---
-    if (interaction.type === InteractionType.ModalSubmit && interaction.customId.startsWith('presos_')) {
-      const passaporte = interaction.customId.split('_')[1];
-      if (ranking[passaporte].finalizado) return;
-
-      const qtd = parseInt(interaction.fields.getTextInputValue('qtd_presos')) || 0;
-      ranking[passaporte].finalizado = true;
-      await finalizarRegistro(interaction, passaporte, qtd);
-      return;
+      await interaction.update({ content: '✅ Registro finalizado', components: [] });
+      await atualizarRanking(interaction.client);
     }
 
   } catch (err) {
-    console.error('Erro ao processar interação:', err.message);
+    console.error(err);
   }
 });
 
-// --- Finalizar registro ---
-async function finalizarRegistro(interaction, passaporte, qtdPresos) {
-  let pontos = 1;
-  if (ranking[passaporte].resultado === 'concluido') pontos += 2;
-  if (ranking[passaporte].houvePrisao === 'sim') pontos += 5 + (qtdPresos * 3);
-  ranking[passaporte].pontos += pontos;
+/* ================= RANKING ================= */
 
-  try {
-    if (interaction.update) await interaction.update({ content: '✅ Registro finalizado!', components: [] });
-    else if (interaction.editReply) await interaction.editReply({ content: '✅ Registro finalizado!', components: [] });
-  } catch {}
-
-  await interaction.followUp({
-    content:
-      `👤 ${ranking[passaporte].nome}\n` +
-      `🪪 Passaporte: ${passaporte}\n` +
-      `🚔 Prisão: ${ranking[passaporte].houvePrisao === 'sim' ? 'Sim' : 'Não'}\n` +
-      `👥 Presos: ${qtdPresos}\n` +
-      `⭐ Pontos ganhos: ${pontos}\n` +
-      `🏆 Total no ranking: ${ranking[passaporte].pontos}`,
-    ephemeral: true
-  });
-
-  await atualizarRanking(interaction.client).catch(console.error);
-}
-
-// --- Ranking fixo ---
 function gerarRanking() {
-  const top = Object.entries(ranking)
-    .sort(([, a], [, b]) => b.pontos - a.pontos)
+  const top = Object.values(ranking)
+    .sort((a, b) => b.pontos - a.pontos)
     .slice(0, 10);
 
-  if (top.length === 0) return '🏆 **RANKING GTM**\nNenhum registro ainda.';
+  if (!top.length) return '🏆 **RANKING GTM**\nSem registros';
 
-  let texto = '🏆 **RANKING GTM — TOP 10**\n';
-  top.forEach(([passaporte, info], i) => {
-    texto += `\n${i + 1}. **${info.nome}** — ⭐ ${info.pontos} pts — 🪪 ${passaporte}`;
-  });
-
-  return texto;
+  return top
+    .map((p, i) => `${i + 1}. **${p.nome}** — ⭐ ${p.pontos}`)
+    .join('\n');
 }
 
-// --- Atualizar ranking ---
 async function atualizarRanking(client) {
-  const canalRankingId = '1450237999429189733';
-  const canal = await client.channels.fetch(canalRankingId);
+  const canal = await client.channels.fetch('1450237999429189733');
 
   let data = { rankingMessageId: '' };
-  if (fs.existsSync(fsRanking)) data = JSON.parse(fs.readFileSync(fsRanking));
+  if (fs.existsSync(RANKING_MESSAGE_FILE)) {
+    data = JSON.parse(fs.readFileSync(RANKING_MESSAGE_FILE));
+  }
 
-  if (data.rankingMessageId) {
-    try {
+  try {
+    if (data.rankingMessageId) {
       const msg = await canal.messages.fetch(data.rankingMessageId);
       await msg.edit({ content: gerarRanking() });
       return;
-    } catch {
-      const msg = await canal.send({ content: gerarRanking() });
-      data.rankingMessageId = msg.id;
-      fs.writeFileSync(fsRanking, JSON.stringify(data, null, 2));
     }
-  } else {
+    throw new Error();
+  } catch {
     const msg = await canal.send({ content: gerarRanking() });
     data.rankingMessageId = msg.id;
-    fs.writeFileSync(fsRanking, JSON.stringify(data, null, 2));
+    fs.writeFileSync(RANKING_MESSAGE_FILE, JSON.stringify(data, null, 2));
   }
 }
 
-// --- Reset mensal ---
+/* ================= RESET MENSAL ================= */
+
 function checarResetMensal(client) {
-  const agora = new Date();
-  const dia = agora.getDate();
-
-  if (dia === 1 && !chequeResetDoDia) {
+  const hoje = new Date().getDate();
+  if (hoje === 1 && !chequeResetDoDia) {
     chequeResetDoDia = true;
-    rankingReset(client);
+    ranking = {};
+    salvarRanking();
+    atualizarRanking(client);
   }
-
-  if (dia !== 1) chequeResetDoDia = false;
+  if (hoje !== 1) chequeResetDoDia = false;
 }
 
-function rankingReset(client) {
-  for (const passaporte in ranking) ranking[passaporte].pontos = 0;
-  atualizarRanking(client).catch(console.error);
+/* ================= LOGIN ================= */
 
-  const canalRankingId = '1450237999429189733';
-  client.channels.fetch(canalRankingId).then(canal => {
-    canal.send('🔔 **O ranking mensal foi zerado!** Todos os pontos começaram do zero.');
-  });
-}
-
-// --- Login ---
 client.login(process.env.TOKEN);
