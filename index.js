@@ -1,49 +1,32 @@
 // ===============================
-// 🌐 SERVIDOR WEB (OBRIGATÓRIO NO RENDER)
+// 🌐 SERVIDOR WEB (obrigatório Render)
 // ===============================
 const express = require('express');
 const app = express();
-
 const PORT = process.env.PORT || 10000;
 
-app.get('/', (req, res) => {
-  res.send('🤖 Bot GTM online!');
-});
+app.get('/', (req, res) => res.send('🤖 Bot GTM online!'));
 
-app.listen(PORT, () => {
-  console.log(`🌐 Servidor web ativo na porta ${PORT}`);
-});
+app.listen(PORT, () => console.log(`🌐 Servidor web ativo na porta ${PORT}`));
 
 // ===============================
 // 🤖 BOT DISCORD
 // ===============================
-const {
-  Client,
-  GatewayIntentBits,
-  ModalBuilder,
-  TextInputBuilder,
-  TextInputStyle,
-  ActionRowBuilder,
-  StringSelectMenuBuilder,
-  ButtonBuilder,
-  ButtonStyle,
-  InteractionType,
-  REST,
-  Routes,
-  SlashCommandBuilder
-} = require('discord.js');
-
-const fs = require('fs');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
 require('dotenv').config();
 
-// --- Configurações ---
+// --- Configuração do bot ---
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
+// --- Variáveis do ranking ---
 const ranking = {};
 const fsRanking = './rankingMessage.json';
-let chequeResetDoDia = false;
 
 // --- Slash command ---
 const commands = [
@@ -57,10 +40,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 (async () => {
   try {
     await rest.put(
-      Routes.applicationGuildCommands(
-        process.env.BOT_ID,
-        process.env.GUILD_ID
-      ),
+      Routes.applicationGuildCommands(process.env.BOT_ID, process.env.GUILD_ID),
       { body: commands }
     );
     console.log('✅ Comando /resetar-ranking registrado!');
@@ -70,34 +50,31 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 })();
 
 // --- Bot pronto ---
-client.once('ready', async () => {
+client.once('ready', () => {
   console.log(`🤖 Bot online como ${client.user.tag}`);
 });
 
-// --- Interações ---
+// --- Interações com slash commands ---
 client.on('interactionCreate', async interaction => {
-  try {
-    // Slash command
-    if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === 'resetar-ranking') {
-        if (interaction.user.id !== process.env.ADMIN_ID) {
-          return interaction.reply({
-            content: '❌ Sem permissão.',
-            ephemeral: true
-          });
-        }
+  if (!interaction.isChatInputCommand()) return;
 
-        for (const p in ranking) ranking[p].pontos = 0;
-        interaction.reply({
-          content: '🔄 Ranking resetado!',
-          ephemeral: true
-        });
-      }
-    }
-  } catch (err) {
-    console.error('Erro na interação:', err.message);
+  if (interaction.commandName === 'resetar-ranking') {
+    if (interaction.user.id !== process.env.ADMIN_ID)
+      return interaction.reply({ content: '❌ Sem permissão.', ephemeral: true });
+
+    for (const p in ranking) ranking[p].pontos = 0;
+    interaction.reply({ content: '🔄 Ranking resetado!', ephemeral: true });
   }
 });
 
-// --- Login ---
+// --- Resposta automática a mensagens (exemplo) ---
+client.on('messageCreate', message => {
+  if (message.author.bot) return;
+
+  if (message.content === '!ping') {
+    message.reply('Pong!');
+  }
+});
+
+// --- Login do bot ---
 client.login(process.env.TOKEN);
